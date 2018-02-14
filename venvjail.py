@@ -26,7 +26,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 
-# Sane default for excludeirpm file
+# Sane default for exclude-rpm file
 EXCLUDE_RPM = r"""# List of packages to ignore (use Python regex)
 
 # Note that `exclude` takes precedence over `include`.  So if a
@@ -54,7 +54,7 @@ python3.*
 rpmlint.*
 """
 
-LICENSE = """# Copyright (c) 2017 SUSE LINUX GmbH, Nuernberg, Germany.
+LICENSE = """# Copyright (c) 2018 SUSE LINUX GmbH, Nuernberg, Germany.
 #
 # All modifications and additions to the file contributed by third parties
 # remain the property of their copyright owners, unless otherwise agreed
@@ -65,6 +65,8 @@ LICENSE = """# Copyright (c) 2017 SUSE LINUX GmbH, Nuernberg, Germany.
 # license that conforms to the Open Source Definition (Version 1.9)
 # published by the Open Source Initiative.
 """
+
+EXCLUDE_LINKS = ['usr/lib64/python2.7']
 
 
 class FileList():
@@ -113,6 +115,8 @@ def _fix_virtualenv(dest_dir, relocated):
 
     _fix_filesystem(dest_dir)
     _fix_alternatives(dest_dir, relocated)
+    _fix_broken_links(dest_dir, relocated,
+                      excluded=EXCLUDE_LINKS)
     _fix_relocation(dest_dir, virtual_env)
     _fix_activators(dest_dir, virtual_env)
     _fix_systemd_services(dest_dir, virtual_env)
@@ -162,6 +166,36 @@ def _fix_alternatives(dest_dir, relocated):
                 if os.path.exists(alt_rel_name):
                     os.unlink(rel_name)
                     os.symlink(alt_name, rel_name)
+                else:
+                    print('ERROR: alternative link for %s not found' % name)
+
+
+def _fix_broken_links(dest_dir, relocated, excluded=None):
+    """Fix broken links."""
+    # Some packages create absolute soft-links.  We can use some
+    # heuristics to detect them, and if is possible, fix them.  If the
+    # link is not fixable, lets fail the build.
+    for dirpath, dirnames, filenames in os.walk(dest_dir):
+        # We can exclude some directories, in `excluded` we create a
+        # list of partial path that are excluded for the analysis.
+        # This is required because a virtualenv can create some links
+        # that we do not want to mangle.
+        if any(_dir in dirpath for _dir in excluded):
+            continue
+
+        for name in filenames:
+            rel_name = os.path.join(dirpath, name)
+            if (os.path.islink(rel_name)
+                and os.readlink(rel_name).startswith('/')):
+                link_to = os.path.join(dest_dir, os.readlink(rel_name)[1:])
+                if os.path.exists(link_to):
+                    # Convert the absolute link into a relative link,
+                    # also takes care of removing the initial '/' from
+                    # the path
+                    rel_link = os.path.relpath(
+                        link_to, os.path.dirname(rel_name))
+                    os.unlink(rel_name)
+                    os.symlink(rel_link, rel_name)
                 else:
                     print('ERROR: alternative link for %s not found' % name)
 
